@@ -20,6 +20,37 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Download offline JavaScript libraries
+        run: |
+          set -e
+
+          mkdir -p app/src/main/assets/www/vendor
+
+          curl -L --fail --retry 3 \
+            https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js \
+            -o app/src/main/assets/www/vendor/xlsx.full.min.js
+
+          curl -L --fail --retry 3 \
+            https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js \
+            -o app/src/main/assets/www/vendor/html2canvas.min.js
+
+          curl -L --fail --retry 3 \
+            https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js \
+            -o app/src/main/assets/www/vendor/jspdf.umd.min.js
+
+          echo "Downloaded libraries:"
+          ls -lh app/src/main/assets/www/vendor/
+
+      - name: Verify offline JavaScript libraries
+        run: |
+          set -e
+
+          test -s app/src/main/assets/www/vendor/xlsx.full.min.js
+          test -s app/src/main/assets/www/vendor/html2canvas.min.js
+          test -s app/src/main/assets/www/vendor/jspdf.umd.min.js
+
+          echo "All offline libraries are present."
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -28,6 +59,11 @@ jobs:
       - name: Build Debug APK
         run: |
           gradle --no-daemon --stacktrace assembleDebug
+
+      - name: Verify APK
+        run: |
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          ls -lh app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
