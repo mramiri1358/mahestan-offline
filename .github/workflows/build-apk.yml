@@ -1,48 +1,81 @@
 name: Build Android APK
 
 on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
+workflow_dispatch:
+push:
+branches: [ main ]
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+build:
+runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+steps:
+  - name: Checkout
+    uses: actions/checkout@v5
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
+  - name: Set up JDK 17
+    uses: actions/setup-java@v5
+    with:
+      distribution: temurin
+      java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+  - name: Prepare Android SDK
+    shell: bash
+    run: |
+      set -e
 
-      - name: Install Android SDK packages
-        run: |
-          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+      export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
+      export ANDROID_HOME="${ANDROID_SDK_ROOT}"
 
-      - name: Accept Android SDK licenses
-        run: |
-          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses > /dev/null || true
+      echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+      echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.7'
+      if [ -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+        SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+      elif [ -x "/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager" ]; then
+        SDKMANAGER="/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager"
+      else
+        echo "ERROR: sdkmanager پیدا نشد."
+        exit 1
+      fi
 
-      - name: Build debug APK
-        run: |
-          gradle --no-daemon --stacktrace assembleDebug
+      echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: MahestanOffline-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+      yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+
+      "$SDKMANAGER" \
+        "platform-tools" \
+        "platforms;android-35" \
+        "build-tools;35.0.0"
+
+      yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+
+  - name: Show Android SDK information
+    shell: bash
+    run: |
+      echo "Android SDK: $ANDROID_SDK_ROOT"
+      "$SDKMANAGER" --version
+      ls -la "$ANDROID_SDK_ROOT/platforms/android-35"
+      ls -la "$ANDROID_SDK_ROOT/build-tools/35.0.0"
+
+  - name: Set up Gradle
+    uses: gradle/actions/setup-gradle@v4
+    with:
+      gradle-version: '8.7'
+
+  - name: Build debug APK
+    run: |
+      gradle --no-daemon --stacktrace assembleDebug
+
+  - name: Verify APK
+    shell: bash
+    run: |
+      ls -lh app/build/outputs/apk/debug/
+      test -f app/build/outputs/apk/debug/app-debug.apk
+
+  - name: Upload APK
+    uses: actions/upload-artifact@v4
+    with:
+      name: MahestanOffline-debug-apk
+      path: app/build/outputs/apk/debug/app-debug.apk
+      if-no-files-found: error
