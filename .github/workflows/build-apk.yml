@@ -38,9 +38,6 @@ jobs:
             https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js \
             -o app/src/main/assets/www/vendor/jspdf.umd.min.js
 
-          echo "Downloaded libraries:"
-          ls -lh app/src/main/assets/www/vendor/
-
       - name: Verify offline JavaScript libraries
         run: |
           set -e
