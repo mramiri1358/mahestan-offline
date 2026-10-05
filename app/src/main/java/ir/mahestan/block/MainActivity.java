@@ -1,40 +1,542 @@
 package ir.mahestan.block;
 
-import android.app.*;
-import android.os.*;
-import android.webkit.*;
-import android.view.*;
-import android.content.*;
+import android.app.Activity;
+import android.os.Bundle;
+import android.os.Build;
+import android.os.Environment;
+import android.webkit.JavascriptInterface;
+import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
 import android.net.Uri;
-import android.provider.MediaStore;
+import android.view.View;
+import android.content.Context;
+import android.content.Intent;
 import android.database.Cursor;
-import android.database.sqlite.*;
+import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteOpenHelper;
+import android.content.ContentValues;
+import android.provider.MediaStore;
 import android.util.Base64;
-import java.io.*;
+import android.widget.Toast;
+
+import androidx.annotation.RequiresApi;
+import androidx.webkit.WebViewAssetLoader;
+import androidx.webkit.WebViewClientCompat;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 
 public class MainActivity extends Activity {
-  private WebView web; private LocalDb db; private ValueCallback<Uri[]> uploadCallback;
-  private static final int FILE_CHOOSER=1001;
-  @Override public void onCreate(Bundle b){super.onCreate(b); db=new LocalDb(this); web=new WebView(this); WebView.setWebContentsDebuggingEnabled(false);
-    WebSettings s=web.getSettings(); s.setJavaScriptEnabled(true); s.setDomStorageEnabled(true); s.setAllowFileAccess(true); s.setAllowContentAccess(true); s.setBuiltInZoomControls(false); s.setDisplayZoomControls(false); s.setMediaPlaybackRequiresUserGesture(false);
-    web.setOverScrollMode(View.OVER_SCROLL_NEVER); web.addJavascriptInterface(new Bridge(this,db),"AndroidBridge");
-    web.setWebChromeClient(new WebChromeClient(){ @Override public boolean onShowFileChooser(WebView v,ValueCallback<Uri[]> cb,FileChooserParams p){ if(uploadCallback!=null)uploadCallback.onReceiveValue(null); uploadCallback=cb; try{Intent i=p.createIntent(); startActivityForResult(i,FILE_CHOOSER); }catch(Exception e){uploadCallback=null;return false;} return true; }});
-    web.setWebViewClient(new WebViewClient()); setContentView(web); web.loadUrl("file:///android_asset/www/index.html"); }
-  @Override protected void onActivityResult(int req,int res,Intent data){super.onActivityResult(req,res,data); if(req==FILE_CHOOSER&&uploadCallback!=null){Uri[] r=null;if(res==RESULT_OK&&data!=null){Uri u=data.getData();if(u!=null)r=new Uri[]{u};}uploadCallback.onReceiveValue(r);uploadCallback=null;}}
-  @Override public void onBackPressed(){ if(web.canGoBack()) web.goBack(); else super.onBackPressed(); }
-  public static class LocalDb extends SQLiteOpenHelper {
-    LocalDb(Context c){super(c,"mahestan_offline.db",null,1);}
-    public void onCreate(SQLiteDatabase d){d.execSQL("CREATE TABLE app_data (key TEXT PRIMARY KEY,value TEXT NOT NULL)");}
-    public void onUpgrade(SQLiteDatabase d,int a,int b){}
-    synchronized String get(String k){Cursor c=getReadableDatabase().query("app_data",new String[]{"value"},"key=?",new String[]{k},null,null,null);try{return c.moveToFirst()?c.getString(0):"";}finally{c.close();}}
-    synchronized void set(String k,String v){ContentValues x=new ContentValues();x.put("key",k);x.put("value",v);getWritableDatabase().insertWithOnConflict("app_data",null,x,SQLiteDatabase.CONFLICT_REPLACE);}
-    synchronized void del(String k){getWritableDatabase().delete("app_data","key=?",new String[]{k});}
-  }
-  public static class Bridge {
-    final Context c; final LocalDb db; Bridge(Context c,LocalDb db){this.c=c;this.db=db;}
-    @JavascriptInterface public String getData(String k){return db.get(k);}
-    @JavascriptInterface public void setData(String k,String v){db.set(k,v);}
-    @JavascriptInterface public void deleteData(String k){db.del(k);}
-    @JavascriptInterface public void saveBlob(String dataUrl,String name,String mime){try{int i=dataUrl.indexOf(',');byte[] bytes=Base64.decode(i>=0?dataUrl.substring(i+1):dataUrl,Base64.DEFAULT);Uri u=null;if(Build.VERSION.SDK_INT>=29){ContentValues v=new ContentValues();v.put(MediaStore.Downloads.DISPLAY_NAME,name);v.put(MediaStore.Downloads.MIME_TYPE,mime);v.put(MediaStore.Downloads.IS_PENDING,1);u=c.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,v);try(OutputStream o=c.getContentResolver().openOutputStream(u)){o.write(bytes);}v.clear();v.put(MediaStore.Downloads.IS_PENDING,0);c.getContentResolver().update(u,v,null,null);}else{File dir=c.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);if(dir==null)dir=c.getFilesDir();dir.mkdirs();try(FileOutputStream o=new FileOutputStream(new File(dir,name))){o.write(bytes);}} ((Activity)c).runOnUiThread(()->android.widget.Toast.makeText(c,"فایل ذخیره شد: "+name,android.widget.Toast.LENGTH_SHORT).show());}catch(Exception e){((Activity)c).runOnUiThread(()->android.widget.Toast.makeText(c,"خطا در ذخیره فایل",android.widget.Toast.LENGTH_SHORT).show());}}
-  }
+
+    private WebView web;
+    private LocalDb db;
+    private android.webkit.ValueCallback<Uri[]> uploadCallback;
+
+    private static final int FILE_CHOOSER = 1001;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+
+        db = new LocalDb(this);
+
+        web = new WebView(this);
+
+        WebView.setWebContentsDebuggingEnabled(false);
+
+        WebSettings settings = web.getSettings();
+
+        // JavaScript
+        settings.setJavaScriptEnabled(true);
+
+        // LocalStorage
+        settings.setDomStorageEnabled(true);
+
+        // Viewport / mobile layout
+        settings.setUseWideViewPort(true);
+        settings.setLoadWithOverviewMode(false);
+
+        // Media
+        settings.setMediaPlaybackRequiresUserGesture(false);
+
+        // Security:
+        // The application does NOT need file:// access because
+        // WebViewAssetLoader serves the local files.
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(true);
+
+        // Zoom
+        settings.setBuiltInZoomControls(false);
+        settings.setDisplayZoomControls(false);
+
+        // Keep scrolling behavior
+        web.setOverScrollMode(View.OVER_SCROLL_NEVER);
+
+        /*
+         * AndroidBridge
+         *
+         * This allows the HTML application to store its important
+         * information inside Android SQLite.
+         */
+        web.addJavascriptInterface(
+                new Bridge(this, db),
+                "AndroidBridge"
+        );
+
+        /*
+         * WebViewAssetLoader
+         *
+         * All files under:
+         *
+         * app/src/main/assets/
+         *
+         * are served locally through:
+         *
+         * https://appassets.androidplatform.net/assets/
+         */
+        final WebViewAssetLoader assetLoader =
+                new WebViewAssetLoader.Builder()
+                        .addPathHandler(
+                                "/assets/",
+                                new WebViewAssetLoader.AssetsPathHandler(this)
+                        )
+                        .build();
+
+        web.setWebViewClient(new LocalContentWebViewClient(assetLoader));
+
+        /*
+         * File chooser
+         */
+        web.setWebChromeClient(
+                new WebChromeClient() {
+
+                    @Override
+                    public boolean onShowFileChooser(
+                            WebView view,
+                            android.webkit.ValueCallback<Uri[]> callback,
+                            FileChooserParams params
+                    ) {
+
+                        if (uploadCallback != null) {
+                            uploadCallback.onReceiveValue(null);
+                        }
+
+                        uploadCallback = callback;
+
+                        try {
+                            Intent intent = params.createIntent();
+
+                            startActivityForResult(
+                                    intent,
+                                    FILE_CHOOSER
+                            );
+
+                        } catch (Exception e) {
+
+                            uploadCallback = null;
+                            return false;
+                        }
+
+                        return true;
+                    }
+                }
+        );
+
+        setContentView(web);
+
+        /*
+         * IMPORTANT:
+         *
+         * Do NOT use:
+         * file:///android_asset/www/index.html
+         *
+         * The application now uses WebViewAssetLoader.
+         */
+        web.loadUrl(
+                "https://appassets.androidplatform.net/assets/www/index.html"
+        );
+    }
+
+    /**
+     * WebView client for local application assets.
+     */
+    private static class LocalContentWebViewClient
+            extends WebViewClientCompat {
+
+        private final WebViewAssetLoader assetLoader;
+
+        LocalContentWebViewClient(
+                WebViewAssetLoader assetLoader
+        ) {
+            this.assetLoader = assetLoader;
+        }
+
+        @RequiresApi(21)
+        @Override
+        public WebResourceResponse shouldInterceptRequest(
+                WebView view,
+                WebResourceRequest request
+        ) {
+            return assetLoader.shouldInterceptRequest(
+                    request.getUrl()
+            );
+        }
+
+        @Override
+        @SuppressWarnings("deprecation")
+        public WebResourceResponse shouldInterceptRequest(
+                WebView view,
+                String url
+        ) {
+            return assetLoader.shouldInterceptRequest(
+                    Uri.parse(url)
+            );
+        }
+    }
+
+    /**
+     * File chooser result.
+     */
+    @Override
+    protected void onActivityResult(
+            int requestCode,
+            int resultCode,
+            Intent data
+    ) {
+
+        super.onActivityResult(
+                requestCode,
+                resultCode,
+                data
+        );
+
+        if (
+                requestCode == FILE_CHOOSER
+                        && uploadCallback != null
+        ) {
+
+            Uri[] result = null;
+
+            if (
+                    resultCode == RESULT_OK
+                            && data != null
+            ) {
+
+                Uri uri = data.getData();
+
+                if (uri != null) {
+                    result = new Uri[]{uri};
+                }
+            }
+
+            uploadCallback.onReceiveValue(result);
+
+            uploadCallback = null;
+        }
+    }
+
+    /**
+     * Android back button.
+     */
+    @Override
+    public void onBackPressed() {
+
+        if (web != null && web.canGoBack()) {
+            web.goBack();
+        } else {
+            super.onBackPressed();
+        }
+    }
+
+    /**
+     * Local SQLite database.
+     *
+     * Database file:
+     * mahestan_offline.db
+     */
+    public static class LocalDb
+            extends SQLiteOpenHelper {
+
+        private static final String DB_NAME =
+                "mahestan_offline.db";
+
+        private static final int DB_VERSION = 1;
+
+        LocalDb(Context context) {
+            super(
+                    context,
+                    DB_NAME,
+                    null,
+                    DB_VERSION
+            );
+        }
+
+        @Override
+        public void onCreate(SQLiteDatabase db) {
+
+            db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS app_data (" +
+                            "key TEXT PRIMARY KEY," +
+                            "value TEXT NOT NULL" +
+                            ")"
+            );
+        }
+
+        @Override
+        public void onUpgrade(
+                SQLiteDatabase db,
+                int oldVersion,
+                int newVersion
+        ) {
+            // Reserved for future database migrations.
+        }
+
+        synchronized String get(String key) {
+
+            Cursor cursor =
+                    getReadableDatabase().query(
+                            "app_data",
+                            new String[]{"value"},
+                            "key=?",
+                            new String[]{key},
+                            null,
+                            null,
+                            null
+                    );
+
+            try {
+
+                if (cursor.moveToFirst()) {
+                    return cursor.getString(0);
+                }
+
+                return "";
+
+            } finally {
+
+                cursor.close();
+            }
+        }
+
+        synchronized void set(
+                String key,
+                String value
+        ) {
+
+            ContentValues values =
+                    new ContentValues();
+
+            values.put("key", key);
+            values.put("value", value);
+
+            getWritableDatabase().insertWithOnConflict(
+                    "app_data",
+                    null,
+                    values,
+                    SQLiteDatabase.CONFLICT_REPLACE
+            );
+        }
+
+        synchronized void delete(
+                String key
+        ) {
+
+            getWritableDatabase().delete(
+                    "app_data",
+                    "key=?",
+                    new String[]{key}
+            );
+        }
+    }
+
+    /**
+     * JavaScript <-> Android bridge.
+     */
+    public static class Bridge {
+
+        private final Context context;
+        private final LocalDb db;
+
+        Bridge(
+                Context context,
+                LocalDb db
+        ) {
+            this.context = context;
+            this.db = db;
+        }
+
+        @JavascriptInterface
+        public String getData(String key) {
+            return db.get(key);
+        }
+
+        @JavascriptInterface
+        public void setData(
+                String key,
+                String value
+        ) {
+            db.set(key, value);
+        }
+
+        @JavascriptInterface
+        public void deleteData(
+                String key
+        ) {
+            db.delete(key);
+        }
+
+        /**
+         * Saves generated files such as PDF / Excel.
+         */
+        @JavascriptInterface
+        public void saveBlob(
+                String dataUrl,
+                String name,
+                String mime
+        ) {
+
+            try {
+
+                int comma =
+                        dataUrl.indexOf(',');
+
+                String base64 =
+                        comma >= 0
+                                ? dataUrl.substring(comma + 1)
+                                : dataUrl;
+
+                byte[] bytes =
+                        Base64.decode(
+                                base64,
+                                Base64.DEFAULT
+                        );
+
+                Uri uri = null;
+
+                /*
+                 * Android 10+
+                 */
+                if (Build.VERSION.SDK_INT >= 29) {
+
+                    ContentValues values =
+                            new ContentValues();
+
+                    values.put(
+                            MediaStore.Downloads.DISPLAY_NAME,
+                            name
+                    );
+
+                    values.put(
+                            MediaStore.Downloads.MIME_TYPE,
+                            mime
+                    );
+
+                    values.put(
+                            MediaStore.Downloads.IS_PENDING,
+                            1
+                    );
+
+                    uri =
+                            context
+                                    .getContentResolver()
+                                    .insert(
+                                            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                                            values
+                                    );
+
+                    if (uri != null) {
+
+                        try (
+                                OutputStream output =
+                                        context
+                                                .getContentResolver()
+                                                .openOutputStream(uri)
+                        ) {
+
+                            if (output != null) {
+                                output.write(bytes);
+                            }
+                        }
+
+                        values.clear();
+
+                        values.put(
+                                MediaStore.Downloads.IS_PENDING,
+                                0
+                        );
+
+                        context
+                                .getContentResolver()
+                                .update(
+                                        uri,
+                                        values,
+                                        null,
+                                        null
+                                );
+                    }
+
+                } else {
+
+                    /*
+                     * Older Android versions.
+                     */
+                    File directory =
+                            context.getExternalFilesDir(
+                                    Environment.DIRECTORY_DOWNLOADS
+                            );
+
+                    if (directory == null) {
+                        directory =
+                                context.getFilesDir();
+                    }
+
+                    if (!directory.exists()) {
+                        directory.mkdirs();
+                    }
+
+                    File file =
+                            new File(
+                                    directory,
+                                    name
+                            );
+
+                    try (
+                            FileOutputStream output =
+                                    new FileOutputStream(file)
+                    ) {
+
+                        output.write(bytes);
+                    }
+                }
+
+                final Activity activity =
+                        (Activity) context;
+
+                activity.runOnUiThread(
+                        () -> Toast.makeText(
+                                context,
+                                "فایل ذخیره شد: " + name,
+                                Toast.LENGTH_SHORT
+                        ).show()
+                );
+
+            } catch (Exception e) {
+
+                final Activity activity =
+                        (Activity) context;
+
+                activity.runOnUiThread(
+                        () -> Toast.makeText(
+                                context,
+                                "خطا در ذخیره فایل",
+                                Toast.LENGTH_SHORT
+                        ).show()
+                );
+            }
+        }
+    }
 }
