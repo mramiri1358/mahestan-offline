@@ -10,6 +10,7 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.webkit.WebViewClient;
 import android.net.Uri;
 import android.view.View;
 import android.content.Context;
@@ -21,8 +22,10 @@ import android.content.ContentValues;
 import android.provider.MediaStore;
 import android.util.Base64;
 import android.widget.Toast;
+import android.graphics.Color;
+import android.view.Gravity;
+import android.widget.TextView;
 
-import androidx.annotation.RequiresApi;
 import androidx.webkit.WebViewAssetLoader;
 import androidx.webkit.WebViewClientCompat;
 
@@ -38,176 +41,209 @@ public class MainActivity extends Activity {
 
     private static final int FILE_CHOOSER = 1001;
 
+    private void showFatalError(final String message) {
+        runOnUiThread(() -> {
+            TextView errorView = new TextView(this);
+            errorView.setText(
+                    "خطای اجرای برنامه\n\n" +
+                    message +
+                    "\n\nلطفاً این صفحه را برای بررسی ارسال کنید."
+            );
+            errorView.setTextSize(16);
+            errorView.setTextColor(Color.WHITE);
+            errorView.setGravity(Gravity.CENTER);
+            errorView.setPadding(30, 30, 30, 30);
+            errorView.setBackgroundColor(Color.rgb(120, 20, 20));
+            setContentView(errorView);
+        });
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        db = new LocalDb(this);
+        try {
+            db = new LocalDb(this);
 
-        web = new WebView(this);
+            web = new WebView(this);
 
-        WebView.setWebContentsDebuggingEnabled(false);
+            WebView.setWebContentsDebuggingEnabled(false);
 
-        WebSettings settings = web.getSettings();
+            WebSettings settings = web.getSettings();
 
-        // JavaScript
-        settings.setJavaScriptEnabled(true);
+            settings.setJavaScriptEnabled(true);
+            settings.setDomStorageEnabled(true);
+            settings.setDatabaseEnabled(true);
 
-        // LocalStorage
-        settings.setDomStorageEnabled(true);
+            settings.setAllowFileAccess(false);
+            settings.setAllowContentAccess(true);
 
-        // Viewport / mobile layout
-        settings.setUseWideViewPort(true);
-        settings.setLoadWithOverviewMode(false);
+            settings.setUseWideViewPort(true);
+            settings.setLoadWithOverviewMode(false);
 
-        // Media
-        settings.setMediaPlaybackRequiresUserGesture(false);
+            settings.setBuiltInZoomControls(false);
+            settings.setDisplayZoomControls(false);
 
-        // Security:
-        // The application does NOT need file:// access because
-        // WebViewAssetLoader serves the local files.
-        settings.setAllowFileAccess(false);
-        settings.setAllowContentAccess(true);
+            settings.setMediaPlaybackRequiresUserGesture(false);
 
-        // Zoom
-        settings.setBuiltInZoomControls(false);
-        settings.setDisplayZoomControls(false);
+            web.setOverScrollMode(View.OVER_SCROLL_NEVER);
 
-        // Keep scrolling behavior
-        web.setOverScrollMode(View.OVER_SCROLL_NEVER);
+            web.addJavascriptInterface(
+                    new Bridge(this, db),
+                    "AndroidBridge"
+            );
 
-        /*
-         * AndroidBridge
-         *
-         * This allows the HTML application to store its important
-         * information inside Android SQLite.
-         */
-        web.addJavascriptInterface(
-                new Bridge(this, db),
-                "AndroidBridge"
-        );
+            final WebViewAssetLoader assetLoader =
+                    new WebViewAssetLoader.Builder()
+                            .addPathHandler(
+                                    "/assets/",
+                                    new WebViewAssetLoader.AssetsPathHandler(this)
+                            )
+                            .build();
 
-        /*
-         * WebViewAssetLoader
-         *
-         * All files under:
-         *
-         * app/src/main/assets/
-         *
-         * are served locally through:
-         *
-         * https://appassets.androidplatform.net/assets/
-         */
-        final WebViewAssetLoader assetLoader =
-                new WebViewAssetLoader.Builder()
-                        .addPathHandler(
-                                "/assets/",
-                                new WebViewAssetLoader.AssetsPathHandler(this)
-                        )
-                        .build();
+            web.setWebViewClient(new WebViewClientCompat() {
 
-        web.setWebViewClient(new LocalContentWebViewClient(assetLoader));
+                @Override
+                public WebResourceResponse shouldInterceptRequest(
+                        WebView view,
+                        WebResourceRequest request
+                ) {
+                    return assetLoader.shouldInterceptRequest(
+                            request.getUrl()
+                    );
+                }
 
-        /*
-         * File chooser
-         */
-        web.setWebChromeClient(
-                new WebChromeClient() {
+                @Override
+                @SuppressWarnings("deprecation")
+                public WebResourceResponse shouldInterceptRequest(
+                        WebView view,
+                        String url
+                ) {
+                    return assetLoader.shouldInterceptRequest(
+                            Uri.parse(url)
+                    );
+                }
 
-                    @Override
-                    public boolean onShowFileChooser(
-                            WebView view,
-                            android.webkit.ValueCallback<Uri[]> callback,
-                            FileChooserParams params
-                    ) {
+                @Override
+                public void onReceivedError(
+                        WebView view,
+                        WebResourceRequest request,
+                        android.webkit.WebResourceError error
+                ) {
+                    if (request.isForMainFrame()) {
+                        String description =
+                                error != null
+                                        ? String.valueOf(error.getDescription())
+                                        : "خطای نامشخص";
 
-                        if (uploadCallback != null) {
-                            uploadCallback.onReceiveValue(null);
+                        showFatalError(
+                                "WebView نتوانست صفحه اصلی را اجرا کند:\n" +
+                                description
+                        );
+                    }
+
+                    super.onReceivedError(view, request, error);
+                }
+
+                @Override
+                public void onReceivedHttpError(
+                        WebView view,
+                        WebResourceRequest request,
+                        WebResourceResponse response
+                ) {
+                    if (request.isForMainFrame()) {
+                        showFatalError(
+                                "خطای HTTP هنگام باز کردن برنامه:\n" +
+                                response.getStatusCode()
+                        );
+                    }
+
+                    super.onReceivedHttpError(
+                            view,
+                            request,
+                            response
+                    );
+                }
+            });
+
+            web.setWebChromeClient(
+                    new WebChromeClient() {
+
+                        @Override
+                        public boolean onShowFileChooser(
+                                WebView view,
+                                android.webkit.ValueCallback<Uri[]> callback,
+                                FileChooserParams params
+                        ) {
+                            if (uploadCallback != null) {
+                                uploadCallback.onReceiveValue(null);
+                            }
+
+                            uploadCallback = callback;
+
+                            try {
+                                Intent intent = params.createIntent();
+
+                                startActivityForResult(
+                                        intent,
+                                        FILE_CHOOSER
+                                );
+
+                                return true;
+
+                            } catch (Exception e) {
+
+                                uploadCallback = null;
+
+                                Toast.makeText(
+                                        MainActivity.this,
+                                        "خطا در باز کردن انتخاب فایل",
+                                        Toast.LENGTH_SHORT
+                                ).show();
+
+                                return false;
+                            }
                         }
 
-                        uploadCallback = callback;
-
-                        try {
-                            Intent intent = params.createIntent();
-
-                            startActivityForResult(
-                                    intent,
-                                    FILE_CHOOSER
+                        @Override
+                        public boolean onConsoleMessage(
+                                android.webkit.ConsoleMessage consoleMessage
+                        ) {
+                            android.util.Log.e(
+                                    "MAHESTAN_WEB",
+                                    consoleMessage.message() +
+                                    " -- خط " +
+                                    consoleMessage.lineNumber()
                             );
 
-                        } catch (Exception e) {
-
-                            uploadCallback = null;
-                            return false;
+                            return true;
                         }
-
-                        return true;
                     }
-                }
-        );
-
-        setContentView(web);
-
-        /*
-         * IMPORTANT:
-         *
-         * Do NOT use:
-         * file:///android_asset/www/index.html
-         *
-         * The application now uses WebViewAssetLoader.
-         */
-        web.loadUrl(
-                "https://appassets.androidplatform.net/assets/www/index.html"
-        );
-    }
-
-    /**
-     * WebView client for local application assets.
-     */
-    private static class LocalContentWebViewClient
-            extends WebViewClientCompat {
-
-        private final WebViewAssetLoader assetLoader;
-
-        LocalContentWebViewClient(
-                WebViewAssetLoader assetLoader
-        ) {
-            this.assetLoader = assetLoader;
-        }
-
-        @RequiresApi(21)
-        @Override
-        public WebResourceResponse shouldInterceptRequest(
-                WebView view,
-                WebResourceRequest request
-        ) {
-            return assetLoader.shouldInterceptRequest(
-                    request.getUrl()
             );
-        }
 
-        @Override
-        @SuppressWarnings("deprecation")
-        public WebResourceResponse shouldInterceptRequest(
-                WebView view,
-                String url
-        ) {
-            return assetLoader.shouldInterceptRequest(
-                    Uri.parse(url)
+            setContentView(web);
+
+            web.loadUrl(
+                    "https://appassets.androidplatform.net/assets/www/index.html"
+            );
+
+        } catch (Exception e) {
+
+            showFatalError(
+                    "خطای Android:\n" +
+                    e.getClass().getName() +
+                    "\n\n" +
+                    String.valueOf(e.getMessage())
             );
         }
     }
 
-    /**
-     * File chooser result.
-     */
     @Override
     protected void onActivityResult(
             int requestCode,
             int resultCode,
             Intent data
     ) {
-
         super.onActivityResult(
                 requestCode,
                 resultCode,
@@ -215,15 +251,15 @@ public class MainActivity extends Activity {
         );
 
         if (
-                requestCode == FILE_CHOOSER
-                        && uploadCallback != null
+                requestCode == FILE_CHOOSER &&
+                uploadCallback != null
         ) {
 
             Uri[] result = null;
 
             if (
-                    resultCode == RESULT_OK
-                            && data != null
+                    resultCode == RESULT_OK &&
+                    data != null
             ) {
 
                 Uri uri = data.getData();
@@ -234,17 +270,12 @@ public class MainActivity extends Activity {
             }
 
             uploadCallback.onReceiveValue(result);
-
             uploadCallback = null;
         }
     }
 
-    /**
-     * Android back button.
-     */
     @Override
     public void onBackPressed() {
-
         if (web != null && web.canGoBack()) {
             web.goBack();
         } else {
@@ -252,12 +283,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    /**
-     * Local SQLite database.
-     *
-     * Database file:
-     * mahestan_offline.db
-     */
     public static class LocalDb
             extends SQLiteOpenHelper {
 
@@ -280,9 +305,9 @@ public class MainActivity extends Activity {
 
             db.execSQL(
                     "CREATE TABLE IF NOT EXISTS app_data (" +
-                            "key TEXT PRIMARY KEY," +
-                            "value TEXT NOT NULL" +
-                            ")"
+                    "key TEXT PRIMARY KEY," +
+                    "value TEXT NOT NULL" +
+                    ")"
             );
         }
 
@@ -292,7 +317,6 @@ public class MainActivity extends Activity {
                 int oldVersion,
                 int newVersion
         ) {
-            // Reserved for future database migrations.
         }
 
         synchronized String get(String key) {
@@ -309,7 +333,6 @@ public class MainActivity extends Activity {
                     );
 
             try {
-
                 if (cursor.moveToFirst()) {
                     return cursor.getString(0);
                 }
@@ -317,7 +340,6 @@ public class MainActivity extends Activity {
                 return "";
 
             } finally {
-
                 cursor.close();
             }
         }
@@ -341,9 +363,7 @@ public class MainActivity extends Activity {
             );
         }
 
-        synchronized void delete(
-                String key
-        ) {
+        synchronized void delete(String key) {
 
             getWritableDatabase().delete(
                     "app_data",
@@ -353,9 +373,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    /**
-     * JavaScript <-> Android bridge.
-     */
     public static class Bridge {
 
         private final Context context;
@@ -383,15 +400,10 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
-        public void deleteData(
-                String key
-        ) {
+        public void deleteData(String key) {
             db.delete(key);
         }
 
-        /**
-         * Saves generated files such as PDF / Excel.
-         */
         @JavascriptInterface
         public void saveBlob(
                 String dataUrl,
@@ -415,11 +427,6 @@ public class MainActivity extends Activity {
                                 Base64.DEFAULT
                         );
 
-                Uri uri = null;
-
-                /*
-                 * Android 10+
-                 */
                 if (Build.VERSION.SDK_INT >= 29) {
 
                     ContentValues values =
@@ -440,7 +447,7 @@ public class MainActivity extends Activity {
                             1
                     );
 
-                    uri =
+                    Uri uri =
                             context
                                     .getContentResolver()
                                     .insert(
@@ -481,17 +488,13 @@ public class MainActivity extends Activity {
 
                 } else {
 
-                    /*
-                     * Older Android versions.
-                     */
                     File directory =
                             context.getExternalFilesDir(
                                     Environment.DIRECTORY_DOWNLOADS
                             );
 
                     if (directory == null) {
-                        directory =
-                                context.getFilesDir();
+                        directory = context.getFilesDir();
                     }
 
                     if (!directory.exists()) {
@@ -508,35 +511,33 @@ public class MainActivity extends Activity {
                             FileOutputStream output =
                                     new FileOutputStream(file)
                     ) {
-
                         output.write(bytes);
                     }
                 }
 
-                final Activity activity =
-                        (Activity) context;
-
-                activity.runOnUiThread(
-                        () -> Toast.makeText(
-                                context,
-                                "فایل ذخیره شد: " + name,
-                                Toast.LENGTH_SHORT
-                        ).show()
+                runOnUiThreadToast(
+                        "فایل ذخیره شد: " + name
                 );
 
             } catch (Exception e) {
 
-                final Activity activity =
-                        (Activity) context;
-
-                activity.runOnUiThread(
-                        () -> Toast.makeText(
-                                context,
-                                "خطا در ذخیره فایل",
-                                Toast.LENGTH_SHORT
-                        ).show()
+                runOnUiThreadToast(
+                        "خطا در ذخیره فایل"
                 );
             }
+        }
+
+        private void runOnUiThreadToast(
+                final String message
+        ) {
+
+            ((Activity) context).runOnUiThread(
+                    () -> Toast.makeText(
+                            context,
+                            message,
+                            Toast.LENGTH_SHORT
+                    ).show()
+            );
         }
     }
 }
